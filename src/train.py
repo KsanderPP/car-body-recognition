@@ -26,6 +26,8 @@ BATCH_SIZE = 32
 IMAGE_SIZE = 224
 EPOCHS_STAGE1 = 5
 LR_STAGE1 = 1e-3
+EPOCHS_STAGE2 = 8
+LR_STAGE2 = 1e-4
 NUM_WORKERS = 0
 MODEL_NAME = "efficientnet_b0"
 
@@ -182,3 +184,63 @@ with open(LOGS_DIR / "history_stage1.json", "w", encoding="utf-8") as f:
 
 print(f"\nBest validation macro F1: {best_valid_f1:.4f}")
 print("Training stage 1 finished.")
+
+print("\nStarting stage 2 fine-tuning...")
+
+for param in model.parameters():
+    param.requires_grad = True
+
+optimizer = torch.optim.AdamW(
+    model.parameters(),
+    lr=LR_STAGE2,
+    weight_decay=1e-4
+)
+
+best_valid_f1_stage2 = best_valid_f1
+best_model_wts_stage2 = copy.deepcopy(model.state_dict())
+
+history_stage2 = []
+
+for epoch in range(EPOCHS_STAGE2):
+    print(f"\n[Stage 2] Epoch {epoch + 1}/{EPOCHS_STAGE2}")
+
+    train_loss, train_acc, train_f1 = run_epoch(model, train_loader, criterion, optimizer)
+    valid_loss, valid_acc, valid_f1 = run_epoch(model, valid_loader, criterion)
+
+    print(
+        f"train_loss={train_loss:.4f} train_acc={train_acc:.4f} train_f1={train_f1:.4f} | "
+        f"valid_loss={valid_loss:.4f} valid_acc={valid_acc:.4f} valid_f1={valid_f1:.4f}"
+    )
+
+    history_stage2.append({
+        "epoch": epoch + 1,
+        "train_loss": train_loss,
+        "train_acc": train_acc,
+        "train_f1": train_f1,
+        "valid_loss": valid_loss,
+        "valid_acc": valid_acc,
+        "valid_f1": valid_f1,
+    })
+
+    if valid_f1 > best_valid_f1_stage2:
+        best_valid_f1_stage2 = valid_f1
+        best_model_wts_stage2 = copy.deepcopy(model.state_dict())
+
+        torch.save(
+            {
+                "model_name": MODEL_NAME,
+                "model_state_dict": model.state_dict(),
+                "class_names": class_names,
+                "best_valid_f1": best_valid_f1_stage2,
+            },
+            CHECKPOINT_DIR / "best_stage2.pth"
+        )
+        print("Saved new best stage 2 model.")
+
+model.load_state_dict(best_model_wts_stage2)
+
+with open(LOGS_DIR / "history_stage2.json", "w", encoding="utf-8") as f:
+    json.dump(history_stage2, f, indent=2)
+
+print(f"\nBest validation macro F1 after stage 2: {best_valid_f1_stage2:.4f}")
+print("Training stage 2 finished.")
