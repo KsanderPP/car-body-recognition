@@ -7,3 +7,5 @@ seaborn
 pandas
 pillow
 tqdm
+ultralytics
+opencv-python

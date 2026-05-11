@@ -10,6 +10,10 @@ data/
 outputs/checkpoints/
 outputs/logs/
 outputs/figures/
+outputs/videos/
+photos/
+videos/
+yolov8n.pt
 
 .DS_Store
 Thumbs.db
