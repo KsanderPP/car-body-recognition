@@ -11,7 +11,7 @@ from ultralytics import YOLO
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 VIDEO_PATH = PROJECT_ROOT / "videos" / "transfagarasan.mp4"
-CHECKPOINT_PATH = PROJECT_ROOT / "outputs" / "checkpoints" / "best_stage2.pth"
+CHECKPOINT_PATH = PROJECT_ROOT / "outputs" / "checkpoints" / "best_stage2_adapted.pth"
 OUTPUT_VIDEO_PATH = PROJECT_ROOT / "outputs" / "videos" / "transfagarasan_tracked.mp4"
 
 OUTPUT_VIDEO_PATH.parent.mkdir(parents=True, exist_ok=True)
