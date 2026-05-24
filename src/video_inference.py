@@ -1,4 +1,7 @@
 from pathlib import Path
+from collections import Counter, defaultdict
+import time
+
 import cv2
 import torch
 from PIL import Image
@@ -87,22 +90,52 @@ def draw_detections(frame, detections):
         )
 
 
-def process_video(video_path, stop_flag=None, frame_step=4):
+def process_video(video_path, stop_flag=None, frame_step=4, output_video_path=None):
     if not video_path.exists():
-        print(f"Video not found: {video_path}")
-        return
+        raise FileNotFoundError(f"Video not found: {video_path}")
 
     classifier, class_names = load_classifier(CHECKPOINT_PATH)
     detector = YOLO(YOLO_MODEL_NAME)
 
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
-        print("Could not open video.")
-        return
+        raise RuntimeError("Could not open video.")
+
+    input_fps = cap.get(cv2.CAP_PROP_FPS)
+    if input_fps <= 0:
+        input_fps = 25.0
+
+    frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+    writer = None
+    if output_video_path is not None:
+        output_video_path = Path(output_video_path)
+        output_video_path.parent.mkdir(parents=True, exist_ok=True)
+
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        writer = cv2.VideoWriter(
+            str(output_video_path),
+            fourcc,
+            input_fps,
+            (frame_width, frame_height)
+        )
+
+        if not writer.isOpened():
+            cap.release()
+            raise RuntimeError("Could not open VideoWriter for output file.")
 
     frame_idx = 0
-    window_name = "Vehicle Detection and Body Type Classification"
+    processed_frames = 0
     last_detections = []
+    window_name = "Vehicle Detection and Body Type Classification"
+
+    total_detections = 0
+    detections_per_class = Counter()
+    confidence_sums = defaultdict(float)
+    confidence_counts = Counter()
+
+    start_time = time.perf_counter()
 
     while True:
         if stop_flag is not None and stop_flag():
@@ -113,6 +146,7 @@ def process_video(video_path, stop_flag=None, frame_step=4):
             break
 
         frame_idx += 1
+        processed_frames += 1
         display_frame = frame.copy()
 
         if frame_idx % frame_step == 0:
@@ -155,9 +189,17 @@ def process_video(video_path, stop_flag=None, frame_step=4):
                         "label": label
                     })
 
+                    total_detections += 1
+                    detections_per_class[pred_class] += 1
+                    confidence_sums[pred_class] += pred_conf
+                    confidence_counts[pred_class] += 1
+
             last_detections = current_detections
 
         draw_detections(display_frame, last_detections)
+
+        if writer is not None:
+            writer.write(display_frame)
 
         cv2.imshow(window_name, display_frame)
         key = cv2.waitKey(1) & 0xFF
@@ -165,5 +207,31 @@ def process_video(video_path, stop_flag=None, frame_step=4):
         if key == ord("q"):
             break
 
+    elapsed_time = time.perf_counter() - start_time
+
     cap.release()
+    if writer is not None:
+        writer.release()
     cv2.destroyAllWindows()
+
+    avg_fps = processed_frames / elapsed_time if elapsed_time > 0 else 0.0
+
+    avg_conf_per_class = {}
+    for class_name in class_names:
+        if confidence_counts[class_name] > 0:
+            avg_conf_per_class[class_name] = confidence_sums[class_name] / confidence_counts[class_name]
+        else:
+            avg_conf_per_class[class_name] = 0.0
+
+    stats = {
+        "video_path": str(video_path),
+        "output_video_path": str(output_video_path) if output_video_path is not None else None,
+        "processed_frames": processed_frames,
+        "elapsed_time_sec": elapsed_time,
+        "average_fps": avg_fps,
+        "total_detections": total_detections,
+        "detections_per_class": dict(detections_per_class),
+        "average_confidence_per_class": avg_conf_per_class,
+    }
+
+    return stats
