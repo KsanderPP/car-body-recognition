@@ -7,10 +7,7 @@ __pycache__/
 *.iml
 
 data/
-outputs/checkpoints/
-outputs/logs/
-outputs/figures/
-outputs/videos/
+outputs/
 photos/
 videos/
 yolov8n.pt

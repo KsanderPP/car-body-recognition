@@ -11,7 +11,7 @@ import timm
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-CHECKPOINT_PATH = PROJECT_ROOT / "outputs" / "checkpoints" / "best_stage2_adapted.pth"
+CHECKPOINT_PATH = PROJECT_ROOT / "outputs" / "checkpoints" / "best_stage3.pth"
 
 YOLO_MODEL_NAME = "yolov8n.pt"
 IMAGE_SIZE = 224

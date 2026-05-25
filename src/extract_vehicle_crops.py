@@ -3,7 +3,7 @@ import cv2
 from ultralytics import YOLO
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-VIDEO_PATH = PROJECT_ROOT / "videos" / "ToCrop.mp4"
+VIDEO_PATH = PROJECT_ROOT / "videos" / "transfagarasan.mp4"
 OUTPUT_DIR = PROJECT_ROOT / "collected_crops" / "unlabeled"
 
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
