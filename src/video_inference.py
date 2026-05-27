@@ -25,6 +25,10 @@ TEXT_BG_COLOR = (0, 180, 0)
 MIN_BOX_W = 80
 MIN_BOX_H = 80
 
+CLASSIFY_EVERY_N_FRAMES = 8
+MIN_CLASSIFY_CONF = 0.60
+TRACK_FORGET_AFTER = 40
+
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 
@@ -74,14 +78,23 @@ def draw_detections(frame, detections):
 
         cv2.rectangle(frame, (x1, y1), (x2, y2), BOX_COLOR, 2)
 
-        label_y1 = max(0, y1 - 30)
+        (text_w, text_h), baseline = cv2.getTextSize(
+            label,
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            2
+        )
+
+        label_y1 = max(0, y1 - text_h - 10)
         label_y2 = y1
-        cv2.rectangle(frame, (x1, label_y1), (x2, label_y2), TEXT_BG_COLOR, -1)
+        label_x2 = min(frame.shape[1], x1 + text_w + 10)
+
+        cv2.rectangle(frame, (x1, label_y1), (label_x2, label_y2), TEXT_BG_COLOR, -1)
 
         cv2.putText(
             frame,
             label,
-            (x1 + 5, max(18, y1 - 8)),
+            (x1 + 5, max(text_h + 2, y1 - 8)),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.6,
             TEXT_COLOR,
@@ -127,13 +140,21 @@ def process_video(video_path, stop_flag=None, frame_step=4, output_video_path=No
 
     frame_idx = 0
     processed_frames = 0
-    last_detections = []
     window_name = "Vehicle Detection and Body Type Classification"
 
     total_detections = 0
     detections_per_class = Counter()
     confidence_sums = defaultdict(float)
     confidence_counts = Counter()
+
+    track_memory = defaultdict(lambda: {
+        "label": None,
+        "conf": 0.0,
+        "last_classified_frame": -999,
+        "last_seen_frame": -999,
+        "votes": defaultdict(float),
+        "box": None,
+    })
 
     start_time = time.perf_counter()
 
@@ -148,55 +169,84 @@ def process_video(video_path, stop_flag=None, frame_step=4, output_video_path=No
         frame_idx += 1
         processed_frames += 1
         display_frame = frame.copy()
+        current_detections = []
 
-        if frame_idx % frame_step == 0:
-            current_detections = []
+        results = detector.track(
+            source=frame,
+            persist=True,
+            conf=YOLO_CONF,
+            classes=[CAR_CLASS_ID],
+            verbose=False
+        )
 
-            results = detector.predict(
-                source=frame,
-                conf=YOLO_CONF,
-                classes=[CAR_CLASS_ID],
-                verbose=False
-            )
+        result = results[0]
 
-            result = results[0]
+        if result.boxes is not None and result.boxes.id is not None:
+            boxes = result.boxes.xyxy.cpu().numpy().astype(int)
+            track_ids = result.boxes.id.int().cpu().tolist()
 
-            if result.boxes is not None:
-                boxes = result.boxes.xyxy.cpu().numpy().astype(int)
+            for box, track_id in zip(boxes, track_ids):
+                x1, y1, x2, y2 = box.tolist()
 
-                for box in boxes:
-                    x1, y1, x2, y2 = box.tolist()
+                x1 = max(0, x1)
+                y1 = max(0, y1)
+                x2 = min(frame.shape[1], x2)
+                y2 = min(frame.shape[0], y2)
 
-                    x1 = max(0, x1)
-                    y1 = max(0, y1)
-                    x2 = min(frame.shape[1], x2)
-                    y2 = min(frame.shape[0], y2)
+                w = x2 - x1
+                h = y2 - y1
+                if w < MIN_BOX_W or h < MIN_BOX_H:
+                    continue
 
-                    w = x2 - x1
-                    h = y2 - y1
-                    if w < MIN_BOX_W or h < MIN_BOX_H:
-                        continue
+                crop = frame[y1:y2, x1:x2]
+                if crop.size == 0:
+                    continue
 
-                    crop = frame[y1:y2, x1:x2]
-                    if crop.size == 0:
-                        continue
+                mem = track_memory[track_id]
+                mem["last_seen_frame"] = frame_idx
+                mem["box"] = (x1, y1, x2, y2)
 
+                should_classify = (frame_idx % frame_step == 0) and (
+                    frame_idx - mem["last_classified_frame"] >= CLASSIFY_EVERY_N_FRAMES
+                )
+
+                if should_classify:
                     pred_class, pred_conf = classify_crop(crop, classifier, class_names)
-                    label = f"{pred_class} {pred_conf:.2f}"
+                    mem["last_classified_frame"] = frame_idx
 
-                    current_detections.append({
-                        "box": (x1, y1, x2, y2),
-                        "label": label
-                    })
+                    if pred_conf >= MIN_CLASSIFY_CONF:
+                        mem["votes"][pred_class] += pred_conf
 
-                    total_detections += 1
-                    detections_per_class[pred_class] += 1
-                    confidence_sums[pred_class] += pred_conf
-                    confidence_counts[pred_class] += 1
+                        best_label = max(mem["votes"], key=mem["votes"].get)
+                        total_votes = sum(mem["votes"].values())
+                        best_score = mem["votes"][best_label] / total_votes if total_votes > 0 else 0.0
 
-            last_detections = current_detections
+                        mem["label"] = best_label
+                        mem["conf"] = best_score
 
-        draw_detections(display_frame, last_detections)
+                        total_detections += 1
+                        detections_per_class[pred_class] += 1
+                        confidence_sums[pred_class] += pred_conf
+                        confidence_counts[pred_class] += 1
+
+                if mem["label"] is not None:
+                    label = f"ID {track_id} | {mem['label']} {mem['conf']:.2f}"
+                else:
+                    label = f"ID {track_id} | car"
+
+                current_detections.append({
+                    "box": (x1, y1, x2, y2),
+                    "label": label
+                })
+
+        stale_ids = [
+            tid for tid, mem in track_memory.items()
+            if frame_idx - mem["last_seen_frame"] > TRACK_FORGET_AFTER
+        ]
+        for tid in stale_ids:
+            del track_memory[tid]
+
+        draw_detections(display_frame, current_detections)
 
         if writer is not None:
             writer.write(display_frame)
